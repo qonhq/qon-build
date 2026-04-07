@@ -1,0 +1,172 @@
+name: Build and Release Qon
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g. 1.2.3). Defaults to core/VERSION"
+        required: false
+      tag_name:
+        description: "Release tag to create (e.g. v1.2.3). Defaults to v<version>"
+        required: false
+      prerelease:
+        description: "Mark release as prerelease"
+        type: boolean
+        required: false
+        default: false
+  push:
+    tags:
+      - "v*.*.*"
+  repository_dispatch:
+    types:
+      - core_release_published
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build-publish-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Sync Qon core submodule (latest)
+        if: ${{ github.event_name != 'repository_dispatch' }}
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git submodule update --init --remote core
+
+          if ! git diff --quiet -- core; then
+            git add core
+            git commit -m "chore: update qon core (sync latest)"
+
+            if [[ "${GITHUB_REF_TYPE}" == "branch" && "${GITHUB_REF_NAME}" == "main" ]]; then
+              git push
+            fi
+          fi
+
+      - name: Pin Qon core submodule to released tag
+        if: ${{ github.event_name == 'repository_dispatch' }}
+        shell: bash
+        env:
+          CORE_TAG: ${{ github.event.client_payload.tag_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [[ -z "$CORE_TAG" ]]; then
+            echo "repository_dispatch payload is missing client_payload.tag_name" >&2
+            exit 1
+          fi
+
+          git submodule update --init core
+          git -C core fetch --tags origin
+          git -C core checkout "$CORE_TAG"
+
+          if ! git diff --quiet -- core; then
+            git add core
+            git commit -m "chore: pin qon core to ${CORE_TAG}"
+            git push
+          fi
+
+      - name: Resolve version
+        id: release_meta
+        shell: bash
+        env:
+          PAYLOAD_VERSION: ${{ github.event.client_payload.version }}
+          PAYLOAD_TAG: ${{ github.event.client_payload.tag_name }}
+          PAYLOAD_NAME: ${{ github.event.client_payload.name }}
+          PAYLOAD_PRERELEASE: ${{ github.event.client_payload.prerelease }}
+          MANUAL_VERSION: ${{ inputs.version }}
+          MANUAL_TAG: ${{ inputs.tag_name }}
+          MANUAL_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          chmod +x scripts/*.sh
+
+          VERSION="${PAYLOAD_VERSION:-${MANUAL_VERSION:-}}"
+          TAG_NAME="${PAYLOAD_TAG:-${MANUAL_TAG:-}}"
+          PRERELEASE_RAW="${PAYLOAD_PRERELEASE:-${MANUAL_PRERELEASE:-false}}"
+
+          if [[ -z "$VERSION" && -n "$TAG_NAME" ]]; then
+            VERSION="${TAG_NAME#v}"
+          fi
+
+          if [[ -z "$VERSION" ]]; then
+            VERSION="$(scripts/resolve-version.sh core/VERSION)"
+          fi
+
+          if [[ -z "$TAG_NAME" ]]; then
+            TAG_NAME="v${VERSION}"
+          fi
+
+          case "${PRERELEASE_RAW,,}" in
+            true|1|yes) PRERELEASE="true" ;;
+            *) PRERELEASE="false" ;;
+          esac
+
+          if [[ "$PRERELEASE" == "true" ]]; then
+            NPM_TAG="dev"
+            MAKE_LATEST="false"
+          else
+            NPM_TAG="latest"
+            MAKE_LATEST="true"
+          fi
+
+          RELEASE_NAME="${PAYLOAD_NAME:-Qon ${TAG_NAME}}"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "npm_tag=$NPM_TAG" >> "$GITHUB_OUTPUT"
+          echo "make_latest=$MAKE_LATEST" >> "$GITHUB_OUTPUT"
+          echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $VERSION"
+          echo "Resolved tag: $TAG_NAME"
+          echo "Prerelease: $PRERELEASE"
+          echo "npm dist-tag: $NPM_TAG"
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.22.x"
+
+      - name: Build binaries
+        shell: bash
+        run: scripts/build-binaries.sh dist
+
+      - name: Generate npm packages
+        shell: bash
+        env:
+          QON_VERSION: ${{ steps.release_meta.outputs.version }}
+        run: scripts/package-npm.sh dist packages
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install latest npm
+        run: npm install -g npm@latest
+
+      - name: Publish npm packages
+        shell: bash
+        run: scripts/publish-npm.sh packages "${{ steps.release_meta.outputs.npm_tag }}"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_meta.outputs.tag_name }}
+          name: ${{ steps.release_meta.outputs.release_name }}
+          prerelease: ${{ steps.release_meta.outputs.prerelease == 'true' }}
+          make_latest: ${{ steps.release_meta.outputs.make_latest }}
+          files: dist/*

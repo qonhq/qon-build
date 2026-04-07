@@ -1,0 +1,56 @@
+name: Auto Close Pull Requests
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  close-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment and close pull request
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const message = [
+              "Thanks for taking the time to contribute.",
+              "",
+              "This repository (`qonhq/qon-build`) is dedicated to official build and release automation only, and we do not accept pull requests here.",
+              "",
+              "Please contribute in one of the following places instead:",
+              "- Core project: https://github.com/qonhq/qon",
+              "- Official JavaScript client: https://github.com/qonhq/qon-js",
+              "- Official Rust client: https://github.com/qonhq/qon-rs",
+              "",
+              "You can also contribute to unofficial community clients and integrations.",
+              "",
+              "If you believe this pull request was opened in `qon-build` by mistake and should be reviewed elsewhere, please reopen it in the appropriate repository listed above.",
+              "",
+              "Closing this pull request automatically per repository contribution policy."
+            ].join("\n");
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: pr.number,
+              body: message
+            });
+
+            await github.rest.pulls.update({
+              owner,
+              repo,
+              pull_number: pr.number,
+              state: "closed"
+            });

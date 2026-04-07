@@ -1,0 +1,7 @@
+# Generated build output
+dist/
+packages/
+
+# Local environment
+.DS_Store
+Thumbs.db
