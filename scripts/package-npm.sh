@@ -55,6 +55,15 @@ for target in "${TARGETS[@]}"; do
   "main": "bin/qon${ext:+.$ext}",
   "bin": {
     "qon": "bin/qon${ext:+.$ext}"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qonhq/qon.git"
+  },
+  "author": "Qon Team",
+  "homepage": "https://github.com/qonhq/qon#readme",
+  "bugs": {
+    "url": "https://github.com/qonhq/qon/issues"
   }
 }
 JSON
