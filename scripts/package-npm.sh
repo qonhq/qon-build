@@ -58,13 +58,9 @@ for target in "${TARGETS[@]}"; do
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/qonhq/qon.git"
+    "url": "git+https://github.com/qonhq/qon-build.git"
   },
-  "author": "Qon Team",
-  "homepage": "https://github.com/qonhq/qon#readme",
-  "bugs": {
-    "url": "https://github.com/qonhq/qon/issues"
-  }
+  "author": "Qon Team"
 }
 JSON
 
